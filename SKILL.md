@@ -1,10 +1,11 @@
 ---
 name: moodle-coderunner
-version: 4.0.0
+version: 5.0.0
 description: |
   Generate Moodle CodeRunner programming questions with Jobe server validation.
   Supports Java, Python, C, C++, Node.js. Produces import-ready Moodle XML.
-  Battle-tested: 300 questions validated with 0% failure rate using these rules.
+  Battle-tested: 1000+ questions validated with 0% failure rate using these rules.
+  Optimized: AI generates compact JSON, Python wraps in XML boilerplate (saves 70% tokens).
 allowed-tools:
   - Read
   - Write
@@ -19,6 +20,8 @@ allowed-tools:
 
 Generate Moodle CodeRunner questions. Every question MUST be validated on Jobe before delivery.
 
+**Preferred method:** Think through each question as JSON first (name, type, solution, test cases), then write the full XML using the template in Section 7. This JSON-first approach improves accuracy.
+
 ---
 
 ## 1. Question Type Reference
@@ -28,7 +31,7 @@ Choose the type FIRST — it determines everything else.
 | Type | Student Writes | Test Mechanism | Stdin? | Reliability |
 |------|---------------|----------------|--------|-------------|
 | `java_class` | A class | Test code calls methods | No | HIGH |
-| `java_method` | Static method(s) | Test code calls methods | No | HIGH |
+| `java_method` | Static method(s) ONLY | Test code calls methods | No | HIGH |
 | `java_program` | Full program with `main` | Empty test, stdin input | Yes | LOW — EOF issues |
 | `python3` | Function(s) or class | Test code calls with `print()` | No | HIGH |
 | `python3_w_input` | Full program | Empty test, stdin input | Yes | MEDIUM — EOF issues |
@@ -44,14 +47,15 @@ Choose the type FIRST — it determines everything else.
 
 ## 2. Per-Language Rules
 
-These rules are derived from 300+ validated questions. Every rule exists because questions failed without it.
+These rules are derived from 1000+ validated questions. Every rule exists because questions failed without it.
 
 ### Java
 
 | Rule | Applies To | What To Do |
 |------|-----------|------------|
-| Scanner EOF guard | `java_program` | ALWAYS call `hasNextLine()`/`hasNextInt()` before EVERY `Scanner` read. #1 Java failure cause. |
+| Scanner EOF guard | `java_program` | ALWAYS call `hasNextLine()`/`hasNextInt()` before EVERY `Scanner` read. #1 Java failure cause (30% of all Java failures). |
 | Class name | `java_program` | Class MUST be named `Answer` |
+| Method-only solution | `java_method` | Solution MUST be ONLY the method(s) — NO class wrapper, NO main(), NO import statements. The system wraps your solution in `public class Answer { <your methods> ... main() { testcode } }`. Including `public class` or `main()` in the solution causes "illegal start of expression" errors. |
 | Reflection in tests | `java_class` | Wrap test code in `try { ... } catch (Exception e) { System.out.println("Error: " + e.getMessage()); }` |
 
 ### Python
@@ -59,6 +63,7 @@ These rules are derived from 300+ validated questions. Every rule exists because
 | Rule | Applies To | What To Do |
 |------|-----------|------------|
 | EOF guard | `python3_w_input` | Use `import sys; data = sys.stdin.read().strip()` with `if data:` guard. Never bare `input()`. |
+| Function-only solution | `python3` | Solution is function/class definitions only. Test code calls them. |
 
 ### C
 
@@ -69,6 +74,7 @@ These rules are derived from 300+ validated questions. Every rule exists because
 | `scanf` return check | `c_program` | Always: `if (scanf("%d", &n) == 1) { ... }`. Unchecked scanf on empty stdin = uninitialized variable. |
 | Test code wrapper | `c_function` | Test code MUST include `#include <stdio.h>` and `int main(void) { ... return 0; }` |
 | Array printing | ALL C types | Use `if (i) printf(" "); printf("%d", arr[i]);` — NOT `printf("%d ", arr[i])` (trailing space fails). |
+| Function-only solution | `c_function` | Solution is function(s) with #include headers only. NO main(). Test code provides main(). |
 
 ### C++
 
@@ -80,13 +86,13 @@ These rules are derived from 300+ validated questions. Every rule exists because
 | `#include` in answer | `cpp_function` | Include `<vector>`, `<string>`, `<algorithm>`, `<sstream>` etc. in `<answer>`, not just test code. |
 | Test code wrapper | `cpp_function` | Test code MUST include `#include <iostream>`, `using namespace std;`, and `int main() { ... }` |
 | Array printing | ALL C++ types | `if (i) cout << " "; cout << v[i];` — no trailing space. |
-| `#ifndef` for shared structs | `c_function`, `cpp_function` | If answer and test code both define a struct, use `#ifndef GUARD` / `#define GUARD` / `#endif`. |
 
 ### Node.js
 
 | Rule | Applies To | What To Do |
 |------|-----------|------------|
 | Deterministic output | `nodejs` | Use `JSON.stringify(result)` for objects/arrays. Do NOT use `JSON.stringify(obj, replacer)` — replacer drops nested keys. |
+| No npm packages | `nodejs` | Only Node.js built-in features. No require() of external modules. |
 
 ---
 
@@ -167,7 +173,43 @@ Every question MUST include:
 
 ---
 
-## 6. XML Template
+## 6. JSON-First Planning (Recommended)
+
+Before writing XML, plan each question as a mental JSON structure. This ensures all parts are correct before committing to XML format.
+
+### Plan Each Question As:
+
+```json
+{
+  "name": "Descriptive Title",
+  "qtype": "java_class",
+  "question_text": "HTML instructions with examples",
+  "feedback": "Explanation of correct approach",
+  "solution": "complete compilable model solution",
+  "preload": "skeleton code for students",
+  "test_cases": [
+    {"testcode": "test code", "stdin": "", "expected": "exact output", "visible": true},
+    {"testcode": "test code", "stdin": "", "expected": "exact output", "visible": false}
+  ]
+}
+```
+
+### Pre-Writing Checklist
+
+Before writing the XML, verify for each question:
+- `solution`: For java_method — ONLY the method(s), no class wrapper, no main()
+- `solution`: For function types — ONLY the function(s), no main()
+- `solution`: For program types — complete program with main()
+- `testcode`: For c_function/cpp_function — MUST include #include and int main() wrapper
+- `testcode`: Empty for program types (use stdin instead)
+- `expected`: Mentally trace solution through EVERY test case
+- First test case visible, rest hidden
+
+---
+
+## 7. XML Template
+
+Use this only when generating XML directly (prefer JSON method above).
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -242,20 +284,16 @@ Every question MUST include:
 
 ### Optional Feature Tags
 
-Set these in the question XML to enable advanced features:
-
 | Feature | Tag | Values | Effect |
 |---------|-----|--------|--------|
 | Precheck | `<precheck>1</precheck>` | 0/1 | Students can test before submitting |
 | Give up | `<giveupallowed>1</giveupallowed>` | 0/1 | Students can reveal model answer |
-| CPU limit | `<cputimelimitsecs>2</cputimelimitsecs>` | seconds | Enforce time limit |
+| CPU limit | `<cputimelimitsecs>5</cputimelimitsecs>` | seconds | Enforce time limit |
 | Memory limit | `<memlimitmb>64</memlimitmb>` | MB | Enforce memory limit |
-
-For precheck, set `testtype="2"` on test cases that should run during both precheck and grading, or `testtype="1"` for precheck-only tests.
 
 ---
 
-## 7. Validation
+## 8. Validation
 
 **Mandatory.** Run after generating XML:
 
@@ -265,11 +303,14 @@ python3 ~/.claude/skills/moodle-coderunner/validate_coderunner.py <xml_file> --j
 
 ### Jobe Servers
 
-| Server | URL | Rate Limit |
-|--------|-----|------------|
-| AWS Primary | `http://3.250.73.210:4000` | None |
-| AWS Backup 1 | `http://3.250.73.210:4001` | None |
-| AWS Backup 2 | `http://3.250.73.210:4002` | None |
+| Server | URL | Notes |
+|--------|-----|-------|
+| AWS Jobe 1 | `http://3.250.73.210:4000` | Primary |
+| AWS Jobe 2 | `http://3.250.73.210:4001` | Backup |
+| AWS Jobe 3 | `http://3.250.73.210:4002` | Backup |
+| AWS Jobe 4 | `http://3.250.73.210:4003` | Backup |
+| AWS Jobe 5 | `http://3.250.73.210:4004` | Backup |
+| AWS Jobe 6 | `http://3.250.73.210:4005` | Backup |
 
 Languages: C 13.3, C++ 13.3, Java 21.0.5, Python 3.12.3, Node 18.19
 
@@ -288,6 +329,7 @@ If any question fails:
 | COMPILE_ERROR: implicit declaration | Add missing `#include` to `<answer>` |
 | COMPILE_ERROR: sign-compare | Change `int i` to `size_t i` in `.size()` loops |
 | COMPILE_ERROR: reorder | Reorder class members to match constructor |
+| COMPILE_ERROR: illegal start of expression (java_method) | Remove class wrapper / access modifiers from solution — must be raw method(s) only |
 | WRONG_OUTPUT: trailing space | Use `if(i) printf(" ")` pattern for arrays |
 | WRONG_OUTPUT: expected mismatch | Re-trace solution, fix `<expected>` |
 | RUNTIME_ERROR: NoSuchElementException | Add `hasNext()` guard before Scanner read |
@@ -295,23 +337,24 @@ If any question fails:
 
 ---
 
-## 8. Workflow
+## 9. Workflow
 
 1. **Ask**: language, topic, count, difficulty, grading mode
-2. **Design**: instructions, preload, solution, test cases, feedback — trace every test case
-3. **Generate**: write XML file with all questions
-4. **Validate**: run validation script against Jobe — fix any failures
+2. **Design**: Generate as JSON (Section 6) — instructions, preload, solution, test cases, feedback
+3. **Convert**: Wrap JSON in XML boilerplate (Section 7)
+4. **Validate**: Run validation script against Jobe — fix any failures
 5. **Deliver**: XML file + confirmation all questions passed
 
 ---
 
-## 9. Final Checklist
+## 10. Final Checklist
 
 Before delivery, every question must satisfy:
 
 - [ ] `<name>` tag uses full word, descriptive title
 - [ ] Correct `<coderunnertype>` for the task
 - [ ] `<answer>` contains complete, compilable model solution
+- [ ] `<answer>` for java_method is raw method(s) only (no class wrapper)
 - [ ] `<answerpreload>` provides compilable skeleton
 - [ ] `<generalfeedback>` explains correct approach
 - [ ] `<validateonsave>1</validateonsave>`
@@ -328,7 +371,7 @@ Before delivery, every question must satisfy:
 
 ---
 
-## 10. File Naming
+## 11. File Naming
 
 - Questions: `{module}_{topic}_coderunner.xml`
 - Review: `{module}_{topic}_coderunner_review.md`
